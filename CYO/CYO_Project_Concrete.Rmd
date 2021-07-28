@@ -1,0 +1,383 @@
+---
+title: "Prediction of Concrete Compressive Strength"
+author: "Morgan Houston"
+date: "July 26, 2021"
+output: 
+  pdf_document:
+    number_sections: TRUE
+  header-includes:
+    \use_package{float}
+    \floatplacement{figure}{H}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = F, warning = F)
+```
+
+```{r}
+#load required packages
+if (!require(tidyverse)) install.packages('tidyverse')
+if (!require(readxl)) install.packages('readxl')
+if (!require(here)) install.packages('here')
+if(!require(kableExtra)) install.packages("kableExtra")
+if (!require(caret)) install.packages('caret')
+if (!require(rpart)) install.packages('rpart')
+if (!require(randomForest)) install.packages('randomForest')
+
+library(tidyverse)
+library(readxl)
+library(here)
+library(kableExtra)
+library(caret)
+library(rpart)
+library(randomForest)
+```
+
+
+# Introduction
+
+The goal of this project is to apply the lessons learned through the Harvard edX Data Science program to a new dataset of our choosing. 
+
+I have selected the "Concrete Compressive Strength Data Set" from the UCI Machine Learning Repository as the data set for this project.
+
+As described in the dataset description, "Concrete is the most important material in civil engineering. The concrete compressive strength is a highly nonlinear function of age and ingredients. These ingredients include cement, blast furnace slag, fly ash, water, superplasticizer, coarse aggregate, and fine aggregate" (Yeh 2007).
+
+As stated by PCA, in "its simplest form, concrete is a mixture of past and aggregates, or rocks". Cement is the main ingredient in concrete, and when combined with water, forms a paste. The paste coats the surface of the aggregates in the mixture (fine and/or coarse), and when this paste hardens, it becomes concrete. The proportions of these ingredients are the key to producing a strong and durable concrete. The strength of the paste "depends on the ratio of water to cement" and "high-quality concrete is produced by lowering the water-cement ratio as much as possible" (PCA 2021). This-water cement ratio has been recognized since 1918 as a key predictor of concrete strength.
+
+Superplasticizers, as discussed in "How Super are Superplasticizers", can be used in three ways: "(1) to create flowing, self-leveling concrete without increasing water, without reducing cement and without sacrificing
+strength; (2) to produce workable, high-strength concrete by reducing the water and thus the water- cement
+ratio; or (3) to save cement by reducing both the water and cement contents while maintaining the same water-cement ratio and the same workability" (Concrete Construction Staff 2021).
+
+Blast furnace slag is the "nonmetallic product, consisting essentially of silicates and aluminosilicates of calcium and of other bases, that is developed in a molten condition simultaneously with iron in a blast furnace" (American Concrete Institute 2021). Fly Ash is "finely divided residue that results from the combustion of ground or powdered coal and that is transported by flue gases from the combustion zone to the particle removal system" (American Concrete Institute 2021). Both of these ingredients can be used to reduce the amount of cement required in the mixture.
+
+Concrete compressive strength is the most common (and accepted) measurement of concrete strength. It "measures the ability of concrete to withstand loads that will decrease the size of the concrete" (Cor-Tuf 2021) and is measured in pounds per square inch. The minimum for a project usually starts at 2,500-3,000 psi (or 17.2-24.1 MPa). The standards (according to the American Concrete Institute), are that the specified compressive strength for the concrete will be based on the 28 day test results, unless otherwise specified in construction documents. Typically, tests at 3 days and 7 days are used to track early strength gain. 
+
+Through this project, I aim to explore the provided dataset and develop a model which uses these features of concrete to predict the compressive strength of the concrete mixture.
+
+# Methods/Analysis
+
+## Data Analysis
+The "Concrete Compressive Strength Data Set" from the UCI Machine Learning Repository consists of eight quantitative input variables and one quantitative output variable, and a total of 1030 rows. The first 10 rows are presented below in Table 1.
+
+```{r concrete_head}
+#use the here package to avoid absolute file paths
+data_file <- here('data','Concrete_data.xls')
+
+#import data file and read into data frame
+concrete <- read_excel(data_file)
+concrete <- as.data.frame(concrete)
+
+concrete_cols <- colnames(concrete)
+head(concrete,10)%>%
+  kbl("latex",caption = "Concrete Compressive Strength Data Set",col.names = concrete_cols)%>%column_spec(1:4,width="1.3cm")%>%
+  column_spec(5,width="2 cm")%>%column_spec(6:9,width="1.3cm")%>%
+  kable_minimal()%>%kable_styling(latex_options = c("HOLD_position"))
+```
+
+Cement, blast furnace slag, fly ash, water, superplasticizer, coarse aggregate, and fine aggregate are all recorded in the same units of kg in an m^3 mixture. Age is recorded in days and is the age of the concrete mixture when the compressive strength was tested. Concrete compressive strength is recorded in megapascals (MPa).
+
+For convenience, I will rename the columns in the dataset as follows:
+```{r rename}
+concrete <- concrete %>%rename(
+  cement = `Cement (component 1)(kg in a m^3 mixture)`,
+  blast_furnace_slag = `Blast Furnace Slag (component 2)(kg in a m^3 mixture)`,
+  fly_ash = `Fly Ash (component 3)(kg in a m^3 mixture)`,
+  water = `Water  (component 4)(kg in a m^3 mixture)`,
+  superplasticizer = `Superplasticizer (component 5)(kg in a m^3 mixture)`,
+  coarse_aggregate = `Coarse Aggregate  (component 6)(kg in a m^3 mixture)`,
+  fine_aggregate = `Fine Aggregate (component 7)(kg in a m^3 mixture)`,
+  age = `Age (day)`,
+  compressive_strength = `Concrete compressive strength(MPa, megapascals)`)
+
+newcols <- colnames(concrete)
+data.frame(Original = concrete_cols, Renamed = newcols)%>%
+  kbl("latex",caption = "Column Renaming")%>%kable_minimal()%>%kable_styling(latex_options = c("HOLD_position"))
+```
+
+
+The summary statistics for the dataset are presented in Table 3. They confirm that the dataset has no missing values, and that each variable within the dataset varies in scale.
+
+```{r concrete_summarystats}
+
+summary(concrete)%>% 
+  #transpose dataset to better fit the page
+  t()%>%
+  kbl("latex", caption = "Concrete Summary Statistics")%>% kable_minimal()%>%kable_styling(latex_options = c("HOLD_position","scale_down"))
+```
+
+First, we will examine the distribution of each variable within the dataset.
+
+```{r, figures-side, fig.show="hold", out.width="33%"}
+#examine distribution of each variable
+hist(concrete$cement)
+hist(concrete$blast_furnace_slag)
+hist(concrete$fly_ash)
+hist(concrete$water)
+hist(concrete$superplasticizer)
+hist(concrete$coarse_aggregate)
+hist(concrete$fine_aggregate)
+hist(concrete$age)
+hist(concrete$compressive_strength)
+```
+
+Blast furnace slag, fly ash, superplasticizer, and age all show a left skew in the distribution. Cement, coarse aggregate, fine aggregate, and compressive strength appear to approximate a normal distribution.
+
+We also examine the correlation between each of these variables by using the corr() function to create the correlation matrix for all variables within the dataset.
+
+```{r corrplot,fig.show="hold"}
+#correlation matrix
+if (!require(corrplot)) install.packages('corrplot')
+library(corrplot)
+C <- cor(concrete)
+#corrplot(C,method = 'number')
+
+img_file <-here('plots','corrplot.png')
+knitr::include_graphics(img_file)
+```
+
+
+
+The greatest correlation is between water and superplasticizer - since superplasticizer is used within concrete to reduce the amount of water required, this makes sense. Cement, fly ash, and blast furnace slag all have a weak correlation as well, which again makes sense given that we know that fly ash and blast furnace slag are both materials that can be used to reduce the amount of cement required in concrete. Fine aggregate and water also appear to have a weak correlation.
+
+Looking at compressive strength, the dependent variable, the variable with  the greatest correlation is cement, with superplasticizer and age the second and third, respectively. We note that this may indicate these are predictors of the concrete strength, and will explore this further in a later section.
+
+We can visualize these relationships using the ggplot functionality.
+
+```{r water_superp_relationship, figures-side, fig.show="hold", out.width="50%"}
+#water + superplasticizer
+concrete %>% ggplot(aes(x=water,y=superplasticizer))+geom_point()
+
+#cement + fly ash
+concrete %>% ggplot(aes(x=cement,y=fly_ash))+geom_point()
+#cement + blast_furnace slag
+concrete %>% ggplot(aes(x=cement,y=blast_furnace_slag))+geom_point()
+# blast_furnace_slag + fly_ash
+concrete %>% ggplot(aes(x=blast_furnace_slag,y=fly_ash))+geom_point()
+```
+
+An interesting feature of the blast furnace slag and fly ash relationship becomes apparent when graphed - we can see three distinct linear trends; two are present on the axes when either is zero, but there is a third clearly linear relationship when both variables are nonzero. This implies that when both ingredients are used in the concrete mixture, they are included in a standard proportion.
+
+This dataset does not include the well-known water-cement ratio, which was presented by Duff Abrams in 1918, and states that the lower the water to cement ratio, the greater the strength of the concrete (American Concrete Institute 2021). We will calculate this using the water and cement features included in the dataset and adding a new column, w_c_ratio.
+
+Additionally, we will extend this concept to calculate a water-binder ratio, where the binder includes cement, blast furnace slag, and fly ash, and add a new column, w_b_ratio.
+
+```{r add_ratio_cols}
+#water cement ratio - Abrams 1918
+#ratio of water weight to cement weight (w/c)
+concrete <- concrete%>%mutate(w_c_ratio = (water/cement))
+concrete <- concrete %>% mutate(additions = (blast_furnace_slag + fly_ash))
+concrete <- concrete %>% mutate(binder = (cement + additions))
+concrete <- concrete%>%mutate(w_b_ratio = (water/(cement + blast_furnace_slag + fly_ash))) #also explore the water to binder ratio
+summary(concrete)%>%
+  t%>%
+  kbl("latex", caption = "Concrete Summary Statistics with Added Features")%>% 
+  kable_minimal()%>%kable_styling(latex_options = c("HOLD_position","scale_down"))
+```
+
+We can visualize the relationships between these additional variables and concrete compressive strength.
+```{r ratios, figures-side, fig.show="hold", out.width="50%"}
+#w_c_ratio
+concrete %>% ggplot(aes(x=w_c_ratio,y=compressive_strength))+geom_point()
+
+#w_b_ratio
+concrete %>% ggplot(aes(x=w_b_ratio,y=compressive_strength))+geom_point()
+
+```
+
+
+
+## Modeling
+First, we will split the concrete dataset into a training dataset, which we will use to develop our model(s) on, and  a test dataset, which we will use to test the performance of our model(s). We do this so that the test set is unknown to our model(s) and only the train set is used for learning. A generally accepted split is 80:20 train:test for larger datasets; as ours is just over 1000 rows, we will select a slightly larger split at 70:30 to allow our test set to be representative of the training set, and allow sufficient variability within the train set.
+```{r}
+#CREATE TEST AND TRAIN DATA
+
+set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)`
+
+test_index <- createDataPartition(y = concrete$compressive_strength, times = 1, p = 0.3, list = FALSE)
+train <- concrete[-test_index,]
+test <- concrete[test_index,]
+
+```
+
+We can check the summary statistics for both the train and test sets to verify that they appear similar.
+
+```{r train_summary}
+#transpose the table for better formatting in page
+summary(train)%>%
+  t()%>%
+  kbl("latex", caption = "Train Set - Summary Statistics")%>% kable_minimal()%>%kable_styling(latex_options = c("HOLD_position","scale_down"))
+
+```
+
+
+```{r test_summary}
+#transpose the table for better formatting in page
+summary(test)%>%  
+  t()%>%
+  kbl("latex", caption = "Test Set- Summary Statistics")%>% kable_minimal()%>%kable_styling(latex_options = c("HOLD_position","scale_down"))
+
+```
+
+We will also define a function to calculate RMSE, which we will use as a measure of model performance. RMSE  (root-mean-square-error) is a measure of the difference between the values predicted by the model and the actual observed values in the data. Trying to predict the compressive strength of concrete (a quantitative, continuous variable) from various numeric features is a regression problem, and as such, RMSE is an appropriate measure for model performance.
+
+The RMSE is defined as:
+
+$RMSE = \sqrt{\frac{1}{N}*\sum_{i=1}^{n}{(y_i-\hat{y_i})^2}}$
+
+where $y_i$ is the observed value for the $i$-th data point and $\hat{y_i}$ is the predicted value.
+
+### Linear Model
+
+We will start with a simple linear model that predicts the compressive strength based on the amount of cement in the mixture, as we saw earlier that cement had the highest correlation with compressive strength in the correlation matrix. We can implement this using the lm() function from the caret package.
+
+```{r cement_lm}
+#linear model (cement)
+cement_lm = lm(compressive_strength ~ cement, data = train)
+#summary(cement_lm)
+predictions <- predict(cement_lm, newdata = test)
+cement_RMSE <- RMSE(test$compressive_strength,predictions)
+
+```
+
+We will also create a table to store the RMSE results in for comparison.
+```{r cement_RMSE}
+#create a results table with the RMSE for each model
+rmse_results <- tibble(method = "Linear - Cement", RMSE = cement_RMSE)
+rmse_results %>%
+    kbl("latex", caption = "RMSE Results")%>% kable_minimal()%>%kable_styling(latex_options = c("HOLD_position"))
+
+```
+
+
+
+Next, we try a linear model using water-cement ratio (previously discussed) as our predictive variable. 
+
+```{r w_c_ratio_lm}
+w_c_ratio_lm <- lm(compressive_strength ~ w_c_ratio, data = train)
+#summary(w_c_ratio_lm)
+predictions <- predict(w_c_ratio_lm, newdata = test)
+w_c_ratio_RMSE <- RMSE(test$compressive_strength,predictions)
+
+rmse_results <- rbind(rmse_results,tibble(method = "Linear - W/C Ratio", RMSE = w_c_ratio_RMSE))
+rmse_results%>%
+    kbl("latex", caption = "RMSE Results")%>% kable_minimal()%>%kable_styling(latex_options = c("HOLD_position"))
+```
+
+We can also try to predict concrete strength based on the water-binder ratio, as this extends the concept of the water-cement ratio by looking at the whole cementitious mixture.
+
+```{r}
+#linear model (w/b ratio)
+w_b_ratio_lm <- lm(compressive_strength ~ w_b_ratio, data = train)
+#summary(w_b_ratio_lm)
+predictions <- predict(w_b_ratio_lm, newdata = test)
+w_b_ratio_RMSE <- RMSE(test$compressive_strength,predictions)
+
+rmse_results <- rbind(rmse_results,tibble(method = "Linear - W/B Ratio", RMSE = w_b_ratio_RMSE))
+rmse_results%>%
+    kbl("latex", caption = "RMSE Results")%>% kable_minimal()%>%kable_styling(latex_options = c("HOLD_position"))
+```
+
+Next, we look at modeling the compressive strength based on all of the original features in the dataset (without the water-cement ratio or the water-binder ratio.)
+
+```{r simple_lm}
+simple_lm <-lm(compressive_strength ~ cement + blast_furnace_slag + fly_ash + water + superplasticizer + coarse_aggregate + fine_aggregate + age, data = train)
+#summary(simple_lm)
+predictions <- predict(simple_lm, newdata = test)
+simple_RMSE <- RMSE(test$compressive_strength,predictions)
+
+rmse_results <- rbind(rmse_results,tibble(method = "Linear - Original Features", RMSE = simple_RMSE))
+rmse_results%>%
+    kbl("latex", caption = "RMSE Results")%>% kable_minimal()%>%kable_styling(latex_options = c("HOLD_position"))
+```
+
+
+Finally, we look at introducing the water-cement ratio and the water-binder ratio into the model. Because we are introducing these engineered features, we will drop the water, cement, blast_furnace_slag, and fly_ash features.
+
+```{r simple_lm2}
+#removing the features that make up the ratios
+simple_lm2 <- lm(compressive_strength ~ w_c_ratio + w_b_ratio + superplasticizer + coarse_aggregate + fine_aggregate + age, data = train)
+predictions <- predict(simple_lm2, newdata = test)
+simple_fit2_RMSE <- RMSE(test$compressive_strength,predictions)  
+
+rmse_results <- rbind(rmse_results,tibble(method = "Linear - Engineered Features", RMSE = simple_fit2_RMSE))
+rmse_results%>%
+    kbl("latex", caption = "RMSE Results")%>% kable_minimal()%>%kable_styling(latex_options = c("HOLD_position"))
+```
+
+We see an improvement in the linear regression approach as we refine the selected features used in the model. Future work could introduce further feature refinement, as well as regularization to reduce the impact of noisy estimates.
+
+### Regression Tree 
+
+We know from the industry that concrete strength is a non-linear function of the concrete  ingredients and the concrete age, and have demonstrated through several linear models that none perform exceptionally well. Next, we look at the application of a regression tree to this problem. A regression tree allows us to approach this problem with a more flexible, nonlinear approach. Where a linear regression model is a single formula for the entire dataset, a regression tree essentially breaks down the data into smaller sets so that we can fit a formula to each localized data set.
+
+We can implement this using the rpart library.
+
+```{r}
+#regression tree
+
+regression_tree_lm <- rpart(compressive_strength~.,data = train)
+predictions <- predict(regression_tree_lm, newdata = test)
+regression_tree_RMSE <- RMSE(test$compressive_strength,predictions)
+
+rmse_results <- rbind(rmse_results,tibble(method = "Regression Tree", RMSE = regression_tree_RMSE))
+rmse_results%>%
+    kbl("latex", caption = "RMSE Results")%>% kable_minimal()%>%kable_styling(latex_options = c("HOLD_position"))
+
+```
+
+
+### Random Forest
+
+We also explore the application of a random forest regression to this problem. A random forest is built on the same principle as a regression tree model, but instead of being built on the entire dataset like a regression tree, a random forest uses randomly selected subsets of the data to build multiple decision trees and then averages the results.
+
+We can implement this using the randomForest library.
+
+```{r}
+#random forest regression
+
+#mtry is the number of predictor variables divided by 3, rounded down
+#mtry is the number of predictor variables divided by 3, rounded down
+concrete_rf <-randomForest(compressive_strength ~ ., data = train, importance = TRUE, na.action = na.omit)
+#importance(concrete_rf)
+predictions <- predict(concrete_rf, newdata = test)
+random_forest_RMSE <- RMSE(test$compressive_strength,predictions)
+
+```
+
+```{r}
+
+rmse_results <- rbind(rmse_results,tibble(method = "Random Forest", RMSE = random_forest_RMSE))
+rmse_results%>%
+    kbl("latex", caption = "RMSE Results")%>% kable_minimal()%>%kable_styling(latex_options = c("HOLD_position"))
+```
+
+# Results
+
+We see that the linear regression models using only cement, only water-cement ratio, and only water-binder ratio, are the worst performing models of the ones presented in this project. As we know that the compressive strength of concrete is a non-linear function of all ingredients, this model makes sense in context. The addition of the other features in the dataset improved model performance by about 25%. 
+
+We saw further improvement by introducing the regression tree technique, although the magnitude of performance increase was not as great (about 14% improvement over linear regression with engineered features). 
+
+After exploring multiple models to predict the compressive strength of concrete, we found the best RMSE was produced by the Random Forest model. This gives us an RMSE of approximately 4.61, which was almost a 50% performance improvement from the regression tree model. We know that RMSE is on the same scale as our dependent variable (compressive strength in MPa), which ranges from 2.33 MPa to 82.60 MPa in our dataset. This is a significant improvement over the other models explored and seems to best fit the non-linear nature of the problem.
+
+# Conclusion and Recommendations
+
+This project has explored the "Concrete Compressive Strength Data Set" from the UCI Machine Learning Repository, and applied several models and techniques, as learned through the HarvardX Data Science program, to predict the compressive strength of concrete.
+
+We think future improvments on this project would be to explore polynomial regression to capture the relationship of the various features to compressive strength. Additionally, there could be significantly more work done in the feature selection and model tuning for the regression tree models and random forest model, which may yield improved performance. We would suggest using cross validation in the model tuning and parameter selection, to offset the challenges presented by a small dataset. Additionally, we would explore and add evaluation metrics to capture whether any  model is overfitting the data.
+
+
+# References
+1. Irizarry, Rafael A (May 24,2021). _Introduction to Data Science,Data Analysis and Prediction Algorithms with R_. https://rafalab.github.io/dsbook/
+
+2. Yeh, Prof. I-Cheng (August 3, 2007). _Concrete Compressive Strength Data Set_. http://archive.ics.uci.edu/ml/datasets/concrete+compressive+strength
+
+3. I-Cheng Yeh, "Modeling of strength of high performance concrete using artificial 
+neural networks," Cement and Concrete Research, Vol. 28, No. 12, pp. 1797-1808 (1998)
+
+4. American Concrete Institute (2021). _Topics In Concrete_.(26 July 2021). https://www.concrete.org/topicsinconcrete.aspx
+
+5. PCA (2019). _How Concrete is Made_. (26 July 2021). https://www.cement.org/cement-concrete/how-concrete-is-made
+
+6. Concrete Construction Staff (2021). _How Super are Superplasticizers_. (26 July 2021). https://www.concreteconstruction.net/how-to/materials/how-super-are-superplasticizers_o
+
+7. Cor-Tuf UHPC (2021). _Everything You Need to Know About Concrete Strength_. (26 July 2021). https://cor-tuf.com/everything-you-need-to-know-about-concrete-strength/
